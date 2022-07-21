@@ -60,25 +60,32 @@ class RemoteRunner:
         public_dns = self.instance.public_dns_name
         logger.info(f"Instance is ready. Public DNS: {public_dns}")
         self.ssh_client = self._setup_ssh_connection(key=key, instance_dns=public_dns)
+        logger.info(f"Pulling execution container: {self.container}...")
+        self.ssh_client.exec_command(
+            "docker pull {self.container}",
+            get_pty=True,
+        )
 
     def _exec_command(
         self, command: Optional[str], source_dir: Union[Path, str] = None, args: List[str] = None
     ) -> str:
         # read script and move to remote
         exec_source_dir = source_dir if source_dir else "/home/ubuntu"
-        full_command = [
-            "docker run",
-            "--runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none",
-            "--entrypoint /bin/bash",
-            "--cap-add=sys_nice --net=host --ipc=host",
-            f"-v {exec_source_dir}:/home/ubuntu/rm-runner --workdir=/home/ubuntu/rm-runner",
-            f"{self.container}",
-            f"{command}",
-        ]
+        full_command = " ".join(
+            [
+                "docker run",
+                "--runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none",
+                "--entrypoint /bin/bash",
+                "--cap-add=sys_nice --net=host --ipc=host",
+                f"-v {exec_source_dir}:/home/ubuntu/rm-runner --workdir=/home/ubuntu/rm-runner",
+                f"{self.container}",
+                f"{command}",
+            ]
+        )
         logger.info(f"Executing: {full_command}")
 
         stdin, stdout, stderr = self.ssh_client.exec_command(
-            " ".join(full_command),
+            full_command,
             get_pty=True,
         )
         while True:
