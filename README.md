@@ -11,3 +11,10 @@ runner = RemoteRunner(instance_type="dl1.24xlarge", profile="hf-sm", region="us-
 
 runner.launch(command="hl-smi")
 ```
+
+## Premissions needed
+
+* create/delete keypairs
+* create/delete secruity groups
+* add inbound/ingress rules to security groups
+* create/start/terminate instances (with ebs)

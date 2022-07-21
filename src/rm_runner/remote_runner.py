@@ -27,7 +27,7 @@ class RemoteRunner:
         self,
         run_name: Optional[str] = f"rm-runner-{generate('abcdefghijklm', 4)}",
         instance_type: str = "t3.micro",
-        container: str = "vault.habana.ai/gaudi-docker/1.4.1/ubuntu20.04/habanalabs/pytorch-installer-1.10.2:1.4.1-11 hl-smi",
+        container: str = "vault.habana.ai/gaudi-docker/1.4.1/ubuntu20.04/habanalabs/pytorch-installer-1.10.2:1.4.1-11",
         access_key_id: Optional[str] = None,
         secret_access_key: Optional[str] = None,
         session_token: Optional[str] = None,
@@ -47,6 +47,7 @@ class RemoteRunner:
         self.instance_type = instance_type
         self.container = container
         self.ami_id = self._get_ami_from_instance_type(instance_type)
+        self.runtime_args = self._get_runtime_args_from_instance_type(instance_type)
 
     def _start(self) -> None:
         key = self._create_ec2_key_pair()
@@ -62,19 +63,21 @@ class RemoteRunner:
         self.ssh_client = self._setup_ssh_connection(key=key, instance_dns=public_dns)
         logger.info(f"Pulling execution container: {self.container}...")
         self.ssh_client.exec_command(
-            "docker pull {self.container}",
+            f"docker pull {self.container}",
             get_pty=True,
         )
 
     def _exec_command(
-        self, command: Optional[str], source_dir: Union[Path, str] = None, args: List[str] = None
+        self, command: Optional[str], source_dir: Union[Path, str] = None, runtime_args: Optional[str] = None
     ) -> str:
         # read script and move to remote
         exec_source_dir = source_dir if source_dir else "/home/ubuntu"
+        runtime_args = runtime_args if runtime_args else self.runtime_args
+
         full_command = " ".join(
             [
                 "docker run",
-                "--runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none",
+                runtime_args,
                 "--entrypoint /bin/bash",
                 "--cap-add=sys_nice --net=host --ipc=host",
                 f"-v {exec_source_dir}:/home/ubuntu/rm-runner --workdir=/home/ubuntu/rm-runner",
@@ -114,7 +117,9 @@ class RemoteRunner:
         logger.info(f"Deleting key: {self.run_name}")
         self.ec2_client.delete_key_pair(KeyName=self.run_name)
 
-    def launch(self, command: Optional[str], source_dir: Union[Path, str] = None) -> None:
+    def launch(
+        self, command: Optional[str], source_dir: Union[Path, str] = None, runtime_args: Optional[str] = None
+    ) -> None:
         start_time = time.time()
         # create ec2
         self._start()
@@ -122,7 +127,7 @@ class RemoteRunner:
         try:
             if source_dir:
                 source_dir = self._upload_data(source_dir)
-            self._exec_command(source_dir=source_dir, command=command)
+            self._exec_command(source_dir=source_dir, command=command, runtime_args=runtime_args)
         except Exception as e:
             logger.error(e)
             self._stop()
@@ -216,3 +221,11 @@ class RemoteRunner:
             return "ami-06d20e48ee8d06029"
         else:
             raise NotImplementedError("only habana support")
+
+    def _get_runtime_args_from_instance_type(self, instance_type):
+        if "dl1" in instance_type:
+            return "--runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none"
+        elif "p" in instance_type or "g" in instance_type:
+            return "--gpus all"
+        else:
+            return ""
