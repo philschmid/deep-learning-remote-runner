@@ -2,23 +2,45 @@ import io
 import logging
 import sys
 import time
-from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, Optional, Union
 
 import paramiko
 from boto3.session import Session
 from scp import SCPClient
 
-import botocore
 from nanoid import generate
+
+from rm_runner.utils import get_price_for_instance_with_seconds
 
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 
+# TODO: keyboar InterruptedError
 
-class RemoteRunner:
+
+def get_ami_id_for_region_and_instance_type(instance_type: str, ec2_client: Any) -> str:
+    if "dl1" in instance_type:
+        name = "Deep Learning AMI Habana"
+    elif "p" in instance_type or "g" in instance_type:
+        name = "Deep Learning AMI GPU"
+    else:
+        return "Deep Learning AMI GPU"
+    return ec2_client.describe_images(
+        Owners=["amazon"],
+        Filters=[
+            {
+                "Name": "name",
+                "Values": [
+                    f"*{name}*Ubuntu 20.04*",
+                ],
+            },
+        ],
+    )["Images"][0]["ImageId"]
+
+
+class EC2RemoteRunner:
     """
     Set up cloud infrastructure and run scripts.
     """
@@ -41,12 +63,13 @@ class RemoteRunner:
             region_name=region,
             profile_name=profile,
         )
+        self.region = region
         self.ec2_client = self.session.client("ec2")
         self.ec2_resource = self.session.resource("ec2")
         self.run_name = run_name
         self.instance_type = instance_type
         self.container = container
-        self.ami_id = self._get_ami_from_instance_type(instance_type)
+        self.ami_id = get_ami_id_for_region_and_instance_type(instance_type, self.ec2_client)
         self.runtime_args = self._get_runtime_args_from_instance_type(instance_type)
 
     def _start(self) -> None:
@@ -61,11 +84,12 @@ class RemoteRunner:
         public_dns = self.instance.public_dns_name
         logger.info(f"Instance is ready. Public DNS: {public_dns}")
         self.ssh_client = self._setup_ssh_connection(key=key, instance_dns=public_dns)
-        logger.info(f"Pulling execution container: {self.container}...")
-        self.ssh_client.exec_command(
+        logger.info(f"Pulling container: {self.container}...")
+        # TODO: check why it is not loaded with lower tier instance
+        stdin, stdout, stderr = self.ssh_client.exec_command(
             f"docker pull {self.container}",
-            get_pty=True,
         )
+        logger.debug(stdout.read().decode())
 
     def _exec_command(
         self, command: Optional[str], source_dir: Union[Path, str] = None, runtime_args: Optional[str] = None
@@ -78,7 +102,6 @@ class RemoteRunner:
             [
                 "docker run",
                 runtime_args,
-                "--entrypoint /bin/bash",
                 "--cap-add=sys_nice --net=host --ipc=host",
                 f"-v {exec_source_dir}:/home/ubuntu/rm-runner --workdir=/home/ubuntu/rm-runner",
                 f"{self.container}",
@@ -99,9 +122,12 @@ class RemoteRunner:
             sys.stdout.flush()
 
     def _upload_data(self, source_dir: Union[Path, str]) -> None:
+        if isinstance(source_dir, str):
+            source_dir = Path(source_dir)
         remote_path = "/home/ubuntu/test"
+        logger.info(f"Uploading from {source_dir}")
         with SCPClient(self.ssh_clientssh.get_transport()) as scp:
-            scp.put(source_dir, recursive=True, remote_path="/home/ubuntu/test")
+            scp.put(source_dir.absolute(), recursive=True, remote_path=remote_path)
         return remote_path
 
     def _stop(self) -> None:
@@ -123,18 +149,40 @@ class RemoteRunner:
         start_time = time.time()
         # create ec2
         self._start()
+        startup_time = round(time.time() - start_time)
         # launch
         try:
             if source_dir:
                 source_dir = self._upload_data(source_dir)
             self._exec_command(source_dir=source_dir, command=command, runtime_args=runtime_args)
+            exec_time = round(time.time() - startup_time - start_time)
         except Exception as e:
             logger.error(e)
             self._stop()
             raise e
+
         # stop
         self._stop()
-        logger.info(f"Total time: {round(time.time() - start_time)}s")
+        terminate_time = round(time.time() - exec_time - startup_time - start_time)
+        total_time = round(time.time() - start_time)
+        estimated_cost = get_price_for_instance_with_seconds(
+            duration=total_time - terminate_time,
+            region=self.region,
+            instance_type=self.instance_type,
+            session=self.session,
+        )
+        logger.info(f"Total time:       {total_time}s")
+        logger.info(f"Startup time:     {startup_time}s")
+        logger.info(f"Execution time:   {exec_time}s")
+        logger.info(f"Termination time: {terminate_time}s")
+        logger.info(f"Estimated cost:  ${estimated_cost}")
+        return {
+            "total_time": total_time,
+            "startup_time": startup_time,
+            "exec_time": exec_time,
+            "terminate_time": terminate_time,
+            "estimated_cost": estimated_cost,
+        }
 
     def _create_ec2_key_pair(self) -> str:
         try:
@@ -215,12 +263,6 @@ class RemoteRunner:
                 t0 += 1
                 time.sleep(5)
         return ssh
-
-    def _get_ami_from_instance_type(self, instance_type):
-        if "dl1" in instance_type:
-            return "ami-06d20e48ee8d06029"
-        else:
-            raise NotImplementedError("only habana support")
 
     def _get_runtime_args_from_instance_type(self, instance_type):
         if "dl1" in instance_type:
