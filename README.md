@@ -1,8 +1,31 @@
 # Remote Runner 
 
-Run python scripts easily on ec2 instances via ssh and scp.
+Remote Runner is an easy pythonic way to migrate your python training scripts from a local environment to a powerful cloud-backed instance to efficiently scale your training, save cost & time, and iterate quickly on experiments in a parallel containerized way. 
 
-## Habana Gaudi example
+**How does Remote Runner work?**
+
+1. Creating all required cloud resources
+2. Migrating your script to the remote machine
+3. Executing your script
+4. making sure the instance is terminated again.
+
+![overview](assets/overview.png)
+
+## Getting started
+
+```python
+pip install rm-runner
+```
+
+**Permissons**
+
+To use `EC2RemoteRunner` you need to following permissions:
+* create/delete keypairs
+* create/delete secruity groups
+* add inbound/ingress rules to security groups
+* create/start/terminate instances (with ebs)
+
+### Habana Gaudi example
 
 ```python
 from rm_runner import EC2RemoteRunner
@@ -82,9 +105,3 @@ runner.launch(command="hl-smi")
 2022-07-21 13:29:12,490 | INFO | Estimated cost:  $1.1
 ```
 
-## Premissions needed
-
-* create/delete keypairs
-* create/delete secruity groups
-* add inbound/ingress rules to security groups
-* create/start/terminate instances (with ebs)
