@@ -49,7 +49,7 @@ class EC2RemoteRunner:
         self,
         run_name: Optional[str] = f"rm-runner-{generate('abcdefghijklm', 4)}",
         instance_type: str = "t3.micro",
-        container: str = "vault.habana.ai/gaudi-docker/1.4.1/ubuntu20.04/habanalabs/pytorch-installer-1.10.2:1.4.1-11",
+        container: str = "huggingface/optimum-habana:latest",
         access_key_id: Optional[str] = None,
         secret_access_key: Optional[str] = None,
         session_token: Optional[str] = None,
@@ -126,7 +126,7 @@ class EC2RemoteRunner:
             source_dir = Path(source_dir)
         remote_path = "/home/ubuntu/test"
         logger.info(f"Uploading from {source_dir}")
-        with SCPClient(self.ssh_clientssh.get_transport()) as scp:
+        with SCPClient(self.ssh_client.get_transport()) as scp:
             scp.put(source_dir.absolute(), recursive=True, remote_path=remote_path)
         return remote_path
 
