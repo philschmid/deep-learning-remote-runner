@@ -190,7 +190,7 @@ class EC2RemoteRunner:
         except Exception as e:
             if "Duplicate" in str(e):
                 self.ec2_client.delete_key_pair(KeyName=self.run_name)
-                key = self.ec2_client2.create_key_pair(KeyName=self.run_name)["KeyMaterial"]
+                key = self.ec2_client.create_key_pair(KeyName=self.run_name)["KeyMaterial"]
             else:
                 raise e
         logger.info(f"Created key pair: {self.run_name}")
